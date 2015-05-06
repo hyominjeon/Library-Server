@@ -14,7 +14,9 @@
   <hr>
   {% for book in books %}
   <p>
-    {{ book.title }}</br>due: <b>{{ book.return_date }}</b>
+    <b>{{ book.title }}</b></br>
+    Author: {{ book.author }}</br>
+    ISBN: {{ book.ISBN }}</br>
   </p>
   {% endfor %}
 {% endblock %}

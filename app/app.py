@@ -1,18 +1,38 @@
 from flask import Flask, render_template, request, url_for, redirect
-from wtforms import Form, BooleanField, TextField, IntegerField, DateField, PasswordField, validators
+from os import getcwd
+from apscheduler.schedulers.background import BackgroundScheduler
+import datetime
+from flask_mail import Message
+from wtforms import Form, BooleanField, TextField, IntegerField, validators
+from flask_wtf.html5 import DateField
 from flask.ext.sqlalchemy import SQLAlchemy
 import flask.ext.whooshalchemy
+from flask_mail import Mail
 from flask.ext.security import Security, SQLAlchemyUserDatastore, \
     UserMixin, RoleMixin, login_required, roles_required, current_user
+import logging
+logging.basicConfig()
     
 # Create app
 app = Flask(__name__)
 app.config['DEBUG'] = True
-app.config['SECRET_KEY'] = 'super-secret'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite://'
-app.config['WHOOSH_BASE'] = 'whoosh_index'
+app.config['SECRET_KEY'] = 'even-more-secret'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///library.db'
+app.config['WHOOSH_BASE'] = getcwd()+'/whoosh_index'
 app.config['SECURITY_REGISTERABLE'] = True
 app.config['SECURITY_RECOVERABLE'] = True
+#app.config['SECURITY_CONFIRMABLE'] = True
+app.config['SECURITY_CHANGEABLE'] = True
+#app.config['SECURITY_PASSWORD_HASH'] = 'bcrypt'
+
+
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 465
+#app.config['MAIL_USE_TLS'] = False
+app.config['MAIL_USE_SSL'] = True
+app.config['MAIL_USERNAME'] = 'brianhyomin@gmail.com'
+app.config['MAIL_PASSWORD'] = 'testpass'
+mail = Mail(app)
 
 # Create database connection object
 db = SQLAlchemy(app)
@@ -48,50 +68,64 @@ class Book(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     title = db.Column(db.String(140))
     author = db.Column(db.String(140))
-    ISBN = db.Column(db.String(140))
-    return_date = db.Column(db.String(140))
+    ISBN = db.Column(db.Integer)
+    return_date = db.Column(db.Date)
+    
+flask.ext.whooshalchemy.whoosh_index(app, Book)
+flask.ext.whooshalchemy.whoosh_index(app, User)
 
 # Setup Flask-Security
 user_datastore = SQLAlchemyUserDatastore(db, User, Role)
 security = Security(app, user_datastore)
 
-# Create a user to test with
+
+def send_notice():
+    
+    print 'sending notices'
+    print
+    
+    #sending notifications to users
+    
+    due_in_week = Book.query.filter_by(return_date= (datetime.date.today()+datetime.timedelta(days=7)) ).all()
+    for book in due_in_week:
+        print book.holder.email
+        print
+        msg = Message('Return Date Reminder', sender = 'brianhyomin@gmail.com', recipients=[book.holder.email])
+        msg.body = book.title+' is due back at the library in a week. Thank you!'
+        with app.app_context():
+            mail.send(msg)
+        
+        
+    due_tomorrow = Book.query.filter_by(return_date= (datetime.date.today()+datetime.timedelta(days=1)) ).all()
+    for book in due_tomorrow:
+        print book.holder.email
+        print
+        msg = Message('Return Date Reminder', sender = 'brianhyomin@gmail.com', recipients=[book.holder.email])
+        msg.body = book.title+' is due back at the library tomorrow. Thank you!'
+        with app.app_context():
+            mail.send(msg)
+    
+    overdue = Book.query.filter(Book.return_date < datetime.date.today()).all()
+    for book in overdue:
+        print book.holder.email
+        print
+        msg = Message('Overdue Book', sender = 'brianhyomin@gmail.com', recipients=[book.holder.email])
+        msg.body = book.title+' is overdue. Please return it!'
+        with app.app_context():
+            mail.send(msg)
+    
+    
+from apscheduler.triggers.cron import CronTrigger
+
 @app.before_first_request
-def create_users():
-    db.create_all()
-    
-    role_librarian = user_datastore.find_or_create_role(name='librarian', description='Librarian')
-    role_user = user_datastore.find_or_create_role(name='library-user', description='Library User')
-    role_library_admin = user_datastore.find_or_create_role(name='library_admin', description='Library Admin')
-    
-    
-    admin = user_datastore.create_user(email='admin', password='password')
-    user_datastore.add_role_to_user(admin, role_librarian)
-    user_datastore.add_role_to_user(admin, role_library_admin)
-    
-    user = user_datastore.create_user(email='user', password='password')
-    user_datastore.add_role_to_user(user, role_user)
-    
-    librarian = user_datastore.create_user(email='librarian', password='password')
-    user_datastore.add_role_to_user(librarian, role_librarian)
-    
-    
-    b = Book(title='test', author = 'me', ISBN = '1', return_date = None,holder=admin)
-    db.session.add(b)
-    
-    b = Book(title='test2', author = 'me', ISBN = '2', return_date = None,holder=user)
-    db.session.add(b)
-    
-    b = Book(title='test3', author = 'me', ISBN = '3', return_date = None,holder=admin)
-    db.session.add(b)
-    
-    b = Book(title='test4', author = 'me', ISBN = '4', return_date = None,holder=librarian)
-    db.session.add(b)
-    
-    b = Book(title='test5', author = 'me', ISBN = '5', return_date = None,holder=user)
-    db.session.add(b)
-    
-    db.session.commit()
+def schedule_notices():
+    sched = BackgroundScheduler()
+    sched.start()
+
+
+    trigger = CronTrigger(day_of_week='*', hour=17)
+    sched.add_job(send_notice, trigger)
+
 
 # Views
 @app.route('/profile')
@@ -143,7 +177,7 @@ def promote_librarian():
 class NewBookForm(Form):
     title = TextField('title', [validators.Length(min=1, max=35)])
     author = TextField('author', [validators.Length(min=1, max=35)])
-    ISBN = TextField('ISBN', [validators.Length(min=1, max=35)])
+    ISBN = IntegerField('ISBN', [validators.Length(min=9, max=9)])
     
 @app.route('/new_book', methods=['GET','POST'])
 @login_required
@@ -161,7 +195,7 @@ def new_book():
 class CheckoutForm(Form):
     email = TextField('email', [validators.Length(min=1, max=35)])
     ISBN = TextField('ISBN', [validators.Length(min=1, max=35)])
-    return_date = TextField('return_date', [validators.Length(min=1, max=35)])
+    return_date = DateField('return_date')
     
 @app.route('/checkout', methods=['GET','POST'])
 @login_required
@@ -181,19 +215,6 @@ def checkout():
 class ReturnForm(Form):
     email = TextField('email', [validators.Length(min=1, max=35)])
     ISBN = TextField('ISBN', [validators.Length(min=1, max=35)])
-    
-@app.route('/return_book', methods=['GET','POST'])
-@login_required
-@roles_required('librarian')
-def show_users_books():
-    form = CheckoutForm(request.form)
-    if request.method == 'POST' and form.validate():
-        library = user_datastore.get_user('admin')
-        
-        user = user_datastore.get_user(form.email.data)
-        books = user.books.all()
-        return render_template('users_books.html',user=user,books=books,logged_in=True)
-    return render_template('return_book.html', logged_in=True)
 
 @app.route('/return_book', methods=['GET','POST'])
 @login_required
@@ -208,25 +229,23 @@ def return_book():
         #book = Book.query.filter_by(ISBN=form.ISBN.data).first()
         
         book.holder = library
+        book.return_date = None
         db.session.commit()
         return redirect(url_for('profile',logged_in=True))
     return render_template('return_book.html',form=form,logged_in=True)
     
-@app.route('/test')
+@app.route('/show_users_books', methods=['GET','POST'])
 @login_required
 @roles_required('librarian')
-def test():
-    library = user_datastore.get_user('admin')
+def show_users_books():
+    form = CheckoutForm(request.form)
+    if request.method == 'POST' and form.validate():
+        library = user_datastore.get_user('admin')
         
-    user = user_datastore.get_user('user')
-    book = Book.query.filter_by(ISBN=2).first()
-        
-    book.holder = library
-        
-    db.session.commit()
-        
-    print book.holder
-    return redirect(url_for('profile',user=library,books=library.books.all(),logged_in=True))
+        user = user_datastore.get_user(form.email.data)
+        books = user.books.all()
+        return render_template('users_books.html',user=user,books=books,logged_in=True)
+    return render_template('users_books.html', logged_in=True)
 
 
 if __name__ == '__main__':

@@ -6,7 +6,13 @@
   <hr>
   {% for book in books %}
   <p>
-    {{ book.title }}</br>due: <b>{{ book.return_date }}</b>
+    <b>{{ book.title }}</b></br>
+    {{ book.author }}</br>
+    {{ book.ISBN }}</br>
+    {% if not book.return_date==None %}
+      Due: {{ book.return_date.strftime("%m/%d/%Y") }}
+    {% endif %}
+    </br></br>
   </p>
   {% endfor %}
 {% endblock %}
